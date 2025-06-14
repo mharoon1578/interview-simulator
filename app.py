@@ -28,7 +28,7 @@ class InterviewSession:
             model_name="mistral-saba-24b"
         )
 
-       self.base_prompt = f"""
+        self.base_prompt = f"""
 You are a strict, professional hiring officer conducting a structured mock interview.
 
 Your job:
@@ -59,14 +59,37 @@ Begin the mock interview now by asking your first question.
 """
 
 
-        self.agent = initialize_agent(
-            tools=[],
-            llm=self.llm,
-            agent="chat-conversational-react-description",
-            verbose=False,
-            memory=self.memory,
-            system_message=self.base_prompt
+        from langchain.chains import LLMChain
+        from langchain.prompts import PromptTemplate
+
+        self.prompt_template = PromptTemplate(
+            input_variables=["conversation"],
+            template=f"""
+        You are a strict hiring officer interviewing the user for the role of: {job_role}.
+
+        Resume:
+        {resume_text}
+
+        Rules:
+        - Ask ONE question at a time
+        - Ask SEVEN questions in total
+        - Wait for the user's reply each time
+        - DO NOT switch roles or explain yourself
+        - Begin the interview now
+
+        Transcript:
+        {{conversation}}
+
+        Your next interview question:
+        """
         )
+
+        self.chain = LLMChain(
+            llm=self.llm,
+            prompt=self.prompt_template,
+            verbose=False
+        )
+        
 
     def ask_next(self, user_input=None):
         if self.finished:
@@ -81,7 +104,9 @@ Begin the mock interview now by asking your first question.
                 prompt = user_input
             else:
                 prompt = f"You are the interviewer. Ask question {self.question_count + 1} now."
-            question = self.agent.run(prompt)
+            conversation = "\n".join([f"{s}: {m}" for s, m in self.transcript])
+            question = self.chain.run({"conversation": conversation})
+
             self.transcript.append(("AI", question))
             return question
 
@@ -99,7 +124,7 @@ Provide a structured evaluation:
 3. Areas for improvement
 4. Final Verdict (Pass or Fail) with reason
 """
-            result = self.agent.run(eval_prompt)
+            result = self.llm.predict(eval_prompt)
             self.transcript.append(("AI", result))
             return result
 
@@ -111,7 +136,6 @@ if "step" not in st.session_state:
     st.session_state.step = "ask_api"
     st.session_state.chat_history = []
 
-# Step 1: Ask for Groq API key
 if st.session_state.step == "ask_api":
     st.chat_message("assistant").markdown("Please enter your Groq API key to begin:")
     api_input = st.text_input("Enter your Groq API Key", type="password")
@@ -120,7 +144,6 @@ if st.session_state.step == "ask_api":
         st.session_state.step = "ask_resume"
         st.rerun()
 
-# Step 2: Upload resume
 elif st.session_state.step == "ask_resume":
     st.chat_message("assistant").markdown("Please upload your resume PDF:")
     uploaded_file = st.file_uploader("Upload Resume", type="pdf")
@@ -151,7 +174,6 @@ elif st.session_state.step == "confirm_start":
         st.session_state.chat_history.append(("AI", response))
         st.rerun()
 
-# Step 4: Interview logic
 elif st.session_state.step == "start_interview":
     if "session" not in st.session_state:
         st.session_state.session = InterviewSession(
